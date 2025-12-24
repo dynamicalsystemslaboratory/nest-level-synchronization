@@ -13,10 +13,11 @@
 All programs and simulations are run in the Julia programming language. Any file not listed here is a helper file for creating necessary data structures and plots, and for saving data.
 
 * `data/` Contains data necessary to generate figures/perform analysis.
+    * To use data, please unzip the `data.zip` folder into your local repository folder (requires git LFS).
     * `results/` Data created from simulations and saved for figure recreation.
         * `case-0/` Simulations run for constant parameters (Section 3A).
         * `case-1_crit-rho/` Simulations run for variations in the activity transition parameters (Section 3B).
-        * `case-1_crit-rho/` Simulations run for variations in the effective temperature and density (Section 3C).
+        * `case-2_crit-spd/` Simulations run for variations in the effective temperature and density (Section 3C).
 
 * `gen/` Scripts used to run simulations and save data used for figure/result generation.
     * `figureN.ipynb` File used to generate data used in Figure N.
