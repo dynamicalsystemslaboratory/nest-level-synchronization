@@ -3,22 +3,49 @@ include( "vars.jl" )
 
 using StaticArrays
 
+# Compute the phase coherence.
+function computephase(Δφ::Vector{defInt})::Vector{defFloat}
+    # Extract the transition points.
+    Nt = length( Δφ ) + 1
+    ι = [1;findall( Δφ .== 1 );Nt]
+
+    # Iterate through each index, setting phase angle.
+    θ = vcat( [2*π*(0.0:(1.0/((ι2-1) - ι1)):1.0) for (ι1, ι2) ∈ zip( ι[1:end-1], ι[2:end] )]... )
+
+    # Return the phase angle list.
+    @assert length( θ ) == Nt-1 "Phase angle list is not the correct length: $(length( θ ))."
+    return θ
+end
+
+function euler(θ::defFloat)::Complex{defFloat}
+    return cos( θ ) + im*sin( θ )
+end
+
+function order(θ::Vector{defFloat})
+    # Return the coherence.
+    return abs( sum( euler.( θ ) )/length( θ ) )
+end
+
 # Pair-wise distance function.
-function pairwisedist(L::defFloat, xlist::Vector{defFloat}, ylist::Vector{defFloat})::Vector{defFloat}
+function pairwisedist(L::defFloat, xlist::Vector{defFloat}, ylist::Vector{defFloat}; n::defInt=-1)::Vector{defFloat}
     # Initialize distance matrix variables.
     N = length( xlist )
-    D = Vector{defFloat}( undef, round( defInt, N*(N-1)/2 ) )
+
+    # Consider subset of full distance set.
+    N̂ = n < 0 ? N : n
+    ιlist = sort( sample( 1:N, N̂; replace=false ) )
+    D = Vector{defFloat}( undef, round( defInt, N̂*(N̂-1)/2 ) )
 
     # Iterate through, calculating distance.
-    for i ∈ 1:N-1
-        for j ∈ i+1:N
+    ι = 1
+    for (k, i) ∈ enumerate( ιlist )
+        for j ∈ ιlist[k+1:end]
             # Horizontal and vertical difference (with periodic boundary).
             dx = xlist[i] - xlist[j];  dx -= round( dx/L ) * L
             dy = ylist[i] - ylist[j];  dy -= round( dy/L ) * L
 
             # Distance.
-            k = round( defInt, (i - 1)*(2N - i)/2 ) + (j - i)
-            D[k] = √(dx*dx + dy*dy)
+            D[ι] = √(dx*dx + dy*dy);  ι += 1
         end
     end
 
@@ -97,6 +124,50 @@ function durationarea(zlist::Vector{State})::Vector{defFloat}
 
     # Compute area coverage numerically.
     return [visioncoverage( r, α, wdata... ) for wdata ∈ wdatalist]
+end
+
+# Compute estimate of the stationary area.
+function stationaryarea(params::Params)::defFloat
+    # Proportion of static area unique.
+    # TODO: Scale by the probability that the agent leaves its current interaction radius.
+    ξ0 = (params.r/params.s)^(1/params.ϕ)
+    g = isnothing( params.Ξ ) ? 1.0 : (cdf( params.Ξ, Inf ) - cdf( params.Ξ, ξ0 ))
+    # g = isnothing( λ ) ? 1.0 : (exp( -λ*α ) - exp( -λ*π ))/(1 - exp( -λ*π ))
+
+    # Offset term.
+    A0 = params.α*params.r^2/(params.ρ*params.ξ)
+    return g*A0
+end
+
+# Compute estimate of the dynamic area.
+function dynamicarea(params::Params)::defFloat
+    # Proportion of dynamic area unique.
+    f = isnothing( params.λ ) ? 1.0 : 1 - (exp( -params.λ*π )*(exp( params.λ*α ) - 1)/(1 - exp( -params.λ*π )))
+
+    # Scaling term.
+    A = 2*params.r*params.s*(params.ξ^params.ϕ)/params.ρ*(params.α < π ? sin( params.α ) : 1.0)
+    return f*A
+end
+
+# Analytically estimated area coverage.
+function areaestimate(params::Params)::defFloat
+    # Return expected total area coverage.
+    return dynamicarea( params ) + stationaryarea( params )
+end
+
+# Critical transition in area coverage.
+function areacriticalξ(params::Params)::defFloat
+    return (params.α*params.r/(2*params.s*params.ϕ*sin( params.α )))^(1/(params.ϕ + 1))
+end
+
+function criticalξ(params::Params, μ::defFloat)::defFloat
+    # if params.ρ/params.β
+    return (params.ρ/(2*params.β*params.γ*params.r*μ*params.s*sin( params.α )))^(1/params.ϕ)
+end
+
+# Activity duty cycle.
+function dutycycle(params::Params, N::defInt)::defFloat
+    return 1/(1 + params.ρ*(1/(N*params.η) + params.τ))
 end
 
 # Critical spontaneous deactivation rate.

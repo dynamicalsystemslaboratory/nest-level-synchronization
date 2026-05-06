@@ -49,6 +49,7 @@ mutable struct Params
     # Intereaction variables.
     r::defFloat
     α::defFloat
+    κ::defFloat
 
     # Distributions for noise parameters.
     Ξ::Distribution
@@ -56,17 +57,18 @@ mutable struct Params
 end
 
 Params(; β::defFloat=1.0, γ::defFloat=1/10,
-    ρ::defFloat=0.0, η::defFloat=0.0, τ::defFloat=75.0,
+    ρ::defFloat=0.1, η::defFloat=0.002, τ::defFloat=75.0,
     ξ::defFloat=0.1, c::defFloat=0.5, ω::defFloat=0.0, λ::defFloat=0.5,
-    ϕ::defFloat=0.25, s::defFloat=10.0,
-    r::defFloat=r, α::defFloat=π/4) = Params( β, γ, ρ, η, τ, ξ, c, ω, λ, ϕ, s, r, α,
+    ϕ::defFloat=0.25, s::defFloat=5.869067,
+    r::defFloat=r, α::defFloat=π/4, κ::defFloat=0.0)::Params = Params(
+        β, γ, ρ, η, τ, ξ, c, ω, λ, ϕ, s/ξ^(ϕ + 1), r, α, κ,
         createdistributions(; ξ=ξ, c=c, ω=ω, λ=λ )... )
 
-function adjparams(params::Params; k::defFloat=Inf,
+function adjparams(params::Params;
     β::defFloat=Inf, γ::defFloat=Inf,
     ρ::defFloat=Inf, η::defFloat=Inf, τ::defFloat=Inf,
     ξ::defFloat=Inf, c::defFloat=Inf, ω::defFloat=Inf, λ::defFloat=Inf,
-    ϕ::defFloat=Inf, s::defFloat=Inf,
+    ϕ::defFloat=Inf, s::defFloat=Inf, κ::defFloat=Inf,
     r::defFloat=Inf, α::defFloat=Inf)
     return Params(;
         β=isfinite( β ) ? β : params.β,
@@ -82,6 +84,7 @@ function adjparams(params::Params; k::defFloat=Inf,
         s=isfinite( s ) ? s : params.s,
         r=isfinite( r ) ? r : params.r,
         α=isfinite( α ) ? α : params.α,
+        κ=isfinite( κ ) ? κ : params.κ,
     )
 end
 
@@ -91,7 +94,7 @@ function saveparams(filename::String, params::Params)
         :β => params.β, :γ => params.γ, :τ => params.τ,
         :ξ => params.ξ, :c => params.c, :ω => params.ω,
         :λ => params.λ, :ϕ => params.ϕ, :s => params.s,
-        :r => params.r, :α => params.α
+        :r => params.r, :α => params.α, :κ => params.κ
     )
     open( filename, "w" ) do io
         JSON3.write( io, tmp )
@@ -104,7 +107,7 @@ function loadparams(filename::String)::Params
     return Params(;
         β=tmp["β"], γ=tmp["γ"], ρ=tmp["ρ"], η=tmp["η"], τ=tmp["τ"],
         ξ=tmp["ξ"], c=tmp["c"], ω=tmp["ω"], λ=tmp["λ"], ϕ=tmp["ϕ"], s=tmp["s"],
-        r=tmp["r"], α=tmp["α"]
+        r=tmp["r"], α=tmp["α"], κ=("κ" ∈ keys( tmp ) ? tmp["κ"] : 0.0)
     )
 end
 
@@ -147,19 +150,29 @@ struct Nondim
     # Intereaction variables.
     r::defFloat
     α::defFloat
+    κ::defFloat
 
     # Distributions for noise parameters.
     Ξ::Distribution
     Ω::Distribution
 end
 
-function Nondim(params::Params; scale::Scale=Scale( 1.0, 0.1 ))::Nondim
+Nondim(; β::defFloat=0.1, γ::defFloat=0.01,
+    ρ::defFloat=0.01, η::defFloat=0.0002, τ::defFloat=750.0,
+    ξ::defFloat=1.0, c::defFloat=0.5, ω::defFloat=0.0, λ::defFloat=0.5,
+    ϕ::defFloat=0.25, s::defFloat=5.869067,
+    r::defFloat=1.0, α::defFloat=π/4, κ::defFloat=0.0)::Nondim = Nondim(
+        β, γ, ρ, η, τ, ξ, c, ω, λ, ϕ, s, r, α, κ,
+        createdistributions(; ξ=ξ, c=c, ω=ω, λ=λ )... )
+
+function Nondim(params::Params; scale::Union{Nothing,Scale}=nothing)::Nondim
+    scale = isnothing( scale ) ? Scale( params.r, params.ξ ) : scale
     return Nondim(
         params.β*scale.T, params.γ*scale.T, params.ρ*scale.T,
         params.η*scale.T, params.τ/scale.T, params.ξ/scale.T,
         params.c, params.ω, params.λ, params.ϕ,
         params.s*scale.T^(params.ϕ + 1)/scale.L,
-        params.r/scale.L, params.α,
+        params.r/scale.L, params.α, params.κ,
         createdistributions(; ξ=params.ξ/scale.T, c=params.c, ω=params.ω, λ=params.λ )... )
 end
 
@@ -240,9 +253,31 @@ end
 
 # Initial state function - capabale of importing from existing state file.
 function initialstate(N::defInt, L::defFloat; A::defInt=1, file::Union{Nothing,String}=nothing)
-    if isnothing(file)
-        return State( N, L; A=A )
-    else
-        return loadstate( file )
+    isnothing( file ) && (return State( N, L; A=A ))
+    return loadstate( file )
+end
+
+function findfolder(N::defInt, μ::defFloat, params::Nondim; base::String="", warn::Bool=true)::String
+    # Build directory string.
+    system = "N-$(N)/mu-$(round( μ, digits=6 ))/"
+    spont  = "beta-$(round( params.β, digits=6 ))/gamm-$(round( params.γ, digits=6 ))/"
+    social = "rho-$(round( params.ρ, digits=6 ))/eta-$(round( params.η, digits=6 ))/tau-$(round( params.τ, digits=6 ))/"
+    motion = "xi-$(round( params.ξ, digits=6 ))/spd-$(round( params.s, digits=6 ))/kap-$(round( params.κ, digits=6 ))/"
+    folder = system*spont*social*motion
+
+    # Warn the user if the directory does not exist (or bypass).
+    warn && (@assert isdir( base*folder ) "Folder ("*folder*") has not been initialized.")
+
+    # Return the folder name.
+    return base*folder
+end
+
+function createfolder(folder::String)::String
+    # Check if folder exists, create if not.
+    if !isdir( folder )
+        mkpath( folder )
     end
+
+    # Return the folder name.
+    return folder
 end

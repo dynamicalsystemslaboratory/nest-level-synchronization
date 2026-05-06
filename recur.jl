@@ -41,7 +41,8 @@ function createbuckets(xlist::Matrix{defFloat}, δx::defFloat)
     return bdict
 end
 
-function recurrence(xlist::Matrix{defFloat}; δx::defFloat=1e-3, step::defInt=1, distance=proximity)::RecurrenceMap
+function recurrence(xlist::AbstractArray{defFloat};
+    δx::defFloat=1e-2, step::defInt=1, distance::Function=proximity)::RecurrenceMap
     T = size( xlist )[1]
     tlist = 1:step:T;  Nt = length( tlist )
 
@@ -70,6 +71,20 @@ function recurrence(xlist::Matrix{defFloat}; δx::defFloat=1e-3, step::defInt=1,
     return RecurrenceMap( tlist, sparse( rlist, clist, ones( Bool, length( rlist ) ), Nt, Nt ) )
 end
 
+function calibraterecur(xlist::AbstractArray{defFloat};
+    RR::defFloat=0.025, δxlist::AbstractArray{defFloat}=1.0./(10:10:100), args...
+    )::Tuple{defFloat, RecurrenceMap}
+    # For each threshold compile the recurrence map.
+    Rlist = [recurrence( xlist; δx=δx, args... ) for δx ∈ δxlist]
+
+    # Compute the recurrence rate of each map.
+    RRlist = recurrate.( Rlist )
+
+    # Return the closest threshold value and the corresponding map.
+    i = argmin( abs.( RR .- RRlist ) )
+    return δxlist[i], Rlist[i]
+end
+
 function recurrate(R::RecurrenceMap)::defFloat
     return sum( R.R )/length( R.t )^2
 end
@@ -93,15 +108,17 @@ function countsegments(rlist::Vector{Bool})
     end
 
     # Catch the last segment.
-    ℓ == 0 || push!(ℓlist, ℓ)
+    ℓ > 0 && push!( ℓlist, ℓ )
 
     return ℓlist
 end
 
-function determinism(R::RecurrenceMap; ℓ0::defInt=10)
+function extractlinelengths(R::RecurrenceMap, ℓ0::defInt)::Dict{defInt,defInt}
+    # Initialize dictionary.
     N = length( R )
     ℓd = Dict{defInt,defInt}()
 
+    # Count line segments.
     for k in -(N - ℓ0):(N - ℓ0)
         # Extract the k-th diagonal.
         rlist = diagk( R, k )
@@ -117,8 +134,63 @@ function determinism(R::RecurrenceMap; ℓ0::defInt=10)
         end
     end
 
+    # Return the compiled dictionary.
+    return ℓd
+end
+
+function determinism(R::RecurrenceMap; ℓd::Union{Nothing,Dict{defInt,defInt}}=nothing,
+    ℓ0::defInt=10, verbose::Bool=false)
+    # Count line lengths if necessary.
+    ℓd = isnothing( ℓd ) ? extractlinelengths( R, ℓ0 ) : ℓd
+
     # Compute the determinism and return: DET = ∑ℓ*N(ℓ)/∑R.
-    return sum( [ℓ*n for (ℓ, n) in ℓd if ℓ0 ≤ ℓ] )/sum( R )
+    ς = sum( [ℓ*n for (ℓ, n) in ℓd if ℓ0 ≤ ℓ] )/sum( R )
+    return verbose ? (ς, ℓd) : ς
+end
+
+function calibratedeter(R::RecurrenceMap; ℓ0::defInt=2,
+    ℓd::Union{Nothing,Dict{defInt,defInt}}=nothing, verbose::Bool=false)
+    # Unpack the default determinism and line lengths.
+    ℓd = isnothing( ℓd ) ? determinism( R; ℓ0=2, verbose=true )[2] : ℓd
+
+    # Extract the number of minima to check.
+    ℓmax = maximum( keys( ℓd ) )
+
+    # Create line length distribution.
+    p = Vector{defFloat}( [haskey( ℓd, ℓ ) ? ℓd[ℓ] : 0 for ℓ ∈ 1:ℓmax] )
+    p ./= sum( p )
+
+    # Compute Otsu weights.
+    ℓlist = ℓ0:ℓmax-1
+    wblist = [sum( p[1:ℓmin-1] ) for ℓmin ∈ ℓlist]
+    wflist = [sum( p[ℓmin:ℓmax] ) for ℓmin ∈ ℓlist]
+
+    # Compute expected value of partitions.
+    μblist = [sum( (1:ℓmin-1).*p[1:ℓmin-1] ) for ℓmin ∈ ℓlist]./wblist
+    μflist = [sum( (ℓmin:ℓmax).*p[ℓmin:ℓmax] ) for ℓmin ∈ ℓlist]./wflist
+
+    # Compute the between-class variance.
+    σlist = wblist.*wflist.*(μblist .- μflist).^2
+
+    # Return the optimal line length and corresponding determinism.
+    i = argmax( σlist )
+    ℓ = ℓlist[i]
+    ς = determinism( R; ℓd=ℓd, ℓ0=ℓ )
+    return verbose ? (ℓ, ς, ℓd) : (ℓ, ς)
+end
+
+function doubledeter(R::RecurrenceMap; verbose::Bool=false)
+    # Extract the threshold using first Otsu.
+    (ℓ1, ς1, ℓd1) = calibratedeter( R; verbose=true )
+
+    # Unpack the line lengths that are above the threshold.
+    ℓmax = maximum( keys( ℓd1 ) )
+    ℓlist = ℓ1:ℓmax
+    ℓd2 = Dict{defInt,defInt}( [ℓ => (haskey( ℓd1, ℓ ) ? ℓd1[ℓ] : 0) for ℓ ∈ ℓlist] )
+
+    # Recompute the threshold.
+    ℓ2, ς2 = calibratedeter( R; ℓ0=ℓ1, ℓd=ℓd2 )
+    return verbose ? ((ℓ2, ς2), (ℓ1, ς1), ℓd1) : (ℓ2, ς2)
 end
 
 function correlate(R::RecurrenceMap, τ::defInt)

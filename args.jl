@@ -35,11 +35,13 @@ default(
     legendfont=font(10, "Computer Modern"), # legend
     titlefont=font(10, "Computer Modern"),  # title
     palette=colorlist,
+    xformatter=:plain, dpi=600,
     left_margin=5pt, right_margin=5pt, bottom_margin=5pt, top_margin=5pt,
 )
 
-function saveplot(plt, filename::String; background=:transparent)
-    plot!( plt; background=background, legend_background_color=:white )
+function saveplot(plt, filename::String;
+    background::Symbol=:transparent, legend_background_color::Symbol=:white, args...)
+    plot!( plt; background=background, legend_background_color=legend_background_color, args... )
     savefig( plt,  filename )
     plot!( plt; background=:white )
     return plt
