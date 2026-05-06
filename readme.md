@@ -2,9 +2,9 @@
 
 **Title:** *Nest-level phase transition drives synchronized activity bursts in ant colonies*\
 **Authors:** Michael Napoli, Simon Garnier, Maurizio Porfiri\
-**Submitted To:** *Physical Review X Life*\
 **Submitted Date:** December 19, 2025\
-**Corresponding Author:** Maurizio Porfiri
+**Repository Contact:** mporfiri@nyu.edu, m.napoli@nyu.edu
+<!-- **Submitted To:** *Physical Review X Life*\ -->
 
 ---
 
@@ -13,6 +13,7 @@
 All programs and simulations are run in the Julia programming language. Any file not listed here is a helper file for creating necessary data structures and plots, or for saving data.
 
 * `appendix/` Scripts used to perform analysis and generate the figures included in the Appendix section.
+    * `hpc-*/` Scripts used to run simulations on the NYU HPC Torch.
     * `figureN.ipynb` File used to construct figure with label N. All data to create figures is saved in the repository, and can be run without running more simulations.
 
 * `gen/` Scripts used to run simulations and save data used for analysis.
